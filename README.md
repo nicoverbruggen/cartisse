@@ -1,15 +1,21 @@
+# Cartisse
+
+This repository contains **Cartisse**, a renamed version of [XCharter](https://www.ctan.org/tex-archive/fonts/xcharter/), which is an extension for [Bitstream Charter](https://en.wikipedia.org/wiki/Bitstream_Charter).
+
 ## What is this?
 
-This repository contains **NV XCharter**, a renamed version of [XCharter](https://www.ctan.org/tex-archive/fonts/xcharter/), which is an extended version of [Bitstream Charter](https://en.wikipedia.org/wiki/Bitstream_Charter).
+**Cartisse is specifically intended to be used with Kobo e-readers.** You can also use it for general word processing and the like, but if you need more glyph coverage or advanced typography features I recommend looking at alternatives like [Charis](https://software.sil.org/charis/download/).
 
-This version omits a few ligatures that consistently looked bad on e-ink displays and has adjusted metrics for improved line height. A more clarified [license](./LICENSE) which is also included as part of the distributed font files.
+This version omits a few ligatures that consistently looked bad on e-ink displays and has adjusted metrics for improved line height. A more clarified [license](./LICENSE) which is also included as part of the distributed font files. 
 
 ## How was this made?
 
-- A few ligatures were removed, namely: `ff`, `ffi`, `ffl`, `fl`, `fi`.
-- Some minor tweaks to kern pairs were made to tighten up the look and feel of the font.
+Manually, for the most part, with FontForge.
+
+- A few ligatures that did not render well on certain e-readers were removed, namely: `ff`, `ffi`, `ffl`, `fl`, `fi`.
+- Some minor tweaks to kern pairs were made to tighten up the look and feel of the font, and to address the removed ligatures.
 - Improved line height metrics were set (updated ascent/descent metrics).
-- The font was renamed and re-exported with [FontForge](https://fontforge.org).
+- The font was renamed and re-exported (see "Export settings" below).
 - The copyright notice has been updated to reflect the new name.
 
 ### Kern pair changes
@@ -22,11 +28,13 @@ Make sure to check the following items when exporting as TTF:
 
 ![Take a look at this screenshot.](./doc/export.png)
 
-In particular, **old style 'kern'** is important for compatibility with older devices.
+In particular, **old style 'kern'** is important for compatibility with older devices, like the Kobo devices that I am targeting specifically.
 
 ### Source files
 
-I've included the FontForge files in this repository.
+I've included the FontForge files in this repository, you can find them in the `/src` folder. 
+
+You can download the TrueType version of these fonts via [Releases](https://github.com/nicoverbruggen/cartisse/releases), which are ready to be copied to your favorite e-reader. Alternatively, you can export the source files yourself.
 
 ## License
 
@@ -42,7 +50,7 @@ Copyright (c) 2025-2026 Nico Verbruggen
 
 XCharter is an extension of Bitstream Charter, whose original license is reproduced below, as required under the terms of that license. The extension provides small caps, oldstyle figures and superior figures in all four styles, accompanied by LaTeX font support files.
 
-NV XCharter is based on XCharter, but contains some manual tweaks and adjustments to metrics for an improved digital reading experience.
+Cartisse is based on XCharter, but contains some metrics modifications and removes certain ligatures.
 
 ---
 

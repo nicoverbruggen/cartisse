@@ -1,10 +1,10 @@
 SplineFontDB: 3.2
-FontName: NV-XCharter-BoldItalic
-FullName: NV XCharter Bold Italic
-FamilyName: NV XCharter
+FontName: Cartisse-BoldItalic
+FullName: Cartisse Bold Italic
+FamilyName: Cartisse
 Weight: Bold
-Copyright: Copyright (c) 1989-1992, Bitstream Inc., Cambridge, MA.\nCopyright (c) 2009, 2010, 2011, 2012 Andrey V. Panov \nCopyright (c) 2013-2024 Michael Sharpe\nCopyright (c) 2025-2026 Nico Verbruggen\n\nXCharter is an extension of Bitstream Charter, whose original license is reproduced below, as required under the terms of that license. The extension provides small caps, oldstyle figures and superior figures in all four styles, accompanied by LaTeX font support files.\n\nNV XCharter is based on XCharter, but contains some manual tweaks and adjustments to metrics for an improved digital reading experience.\n\n---\n\nYou are hereby granted permission under all Bitstream propriety rights\nto use, copy, modify, sublicense, sell, and redistribute the 4 Bitstream\nCharter (r) Type 1 outline fonts and the 4 Courier Type 1 outline fonts\nfor any purpose and without restriction; provided, that this notice is\nleft intact on all copies of such fonts and that Bitstream's trademark\nis acknowledged as shown below on all unmodified copies of the 4 Charter\nType 1 fonts.\n\nBITSTREAM CHARTER is a registered trademark of Bitstream Inc.
-Version: 1.4
+Copyright: Copyright (c) 1989-1992, Bitstream Inc., Cambridge, MA.\nCopyright (c) 2009, 2010, 2011, 2012 Andrey V. Panov \nCopyright (c) 2013-2024 Michael Sharpe\nCopyright (c) 2025-2026 Nico Verbruggen\n\nXCharter is an extension of Bitstream Charter, whose original license is reproduced below, as required under the terms of that license. The extension provides small caps, oldstyle figures and superior figures in all four styles, accompanied by LaTeX font support files.\n\nCartisse is based on XCharter, but contains some metrics modifications and removes certain ligatures.\n\n---\n\nYou are hereby granted permission under all Bitstream propriety rights\nto use, copy, modify, sublicense, sell, and redistribute the 4 Bitstream\nCharter (r) Type 1 outline fonts and the 4 Courier Type 1 outline fonts\nfor any purpose and without restriction; provided, that this notice is\nleft intact on all copies of such fonts and that Bitstream's trademark\nis acknowledged as shown below on all unmodified copies of the 4 Charter\nType 1 fonts.\n\nBITSTREAM CHARTER is a registered trademark of Bitstream Inc.
+Version: 2.0
 ItalicAngle: -11
 UnderlinePosition: -109
 UnderlineWidth: 90
@@ -21,7 +21,7 @@ OS2Version: 4
 OS2_WeightWidthSlopeOnly: 0
 OS2_UseTypoMetrics: 1
 CreationTime: 1136849748
-ModificationTime: 1772376653
+ModificationTime: 1772385237
 PfmFamily: 17
 TTFWeight: 700
 TTFWidth: 5
