@@ -1,6 +1,6 @@
 ## What is this?
 
-This repository contains **NV Charter**, a renamed version of [XCharter](https://www.ctan.org/tex-archive/fonts/xcharter/), which is an extended version of [Bitstream Charter](https://en.wikipedia.org/wiki/Bitstream_Charter).
+This repository contains **NV XCharter**, a renamed version of [XCharter](https://www.ctan.org/tex-archive/fonts/xcharter/), which is an extended version of [Bitstream Charter](https://en.wikipedia.org/wiki/Bitstream_Charter).
 
 This version omits a few ligatures that consistently looked bad on e-ink displays and has adjusted metrics for improved line height. A more clarified [license](./LICENSE) which is also included as part of the distributed font files.
 
@@ -42,7 +42,7 @@ Copyright (c) 2025-2026 Nico Verbruggen
 
 XCharter is an extension of Bitstream Charter, whose original license is reproduced below, as required under the terms of that license. The extension provides small caps, oldstyle figures and superior figures in all four styles, accompanied by LaTeX font support files.
 
-NV Charter is based on XCharter, but contains some manual tweaks and adjustments to metrics for an improved digital reading experience.
+NV XCharter is based on XCharter, but contains some manual tweaks and adjustments to metrics for an improved digital reading experience.
 
 ---
 
