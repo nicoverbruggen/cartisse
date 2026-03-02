@@ -1,6 +1,6 @@
 # Cartisse
 
-This repository contains **Cartisse**, a renamed version of [XCharter](https://www.ctan.org/tex-archive/fonts/xcharter/), which is an extension for [Bitstream Charter](https://en.wikipedia.org/wiki/Bitstream_Charter).
+This repository contains **Cartisse**, a modified version of [XCharter](https://www.ctan.org/tex-archive/fonts/xcharter/), which is an extension for [Bitstream Charter](https://en.wikipedia.org/wiki/Bitstream_Charter).
 
 ## What is this?
 
