@@ -40,6 +40,40 @@ In particular, **old style 'kern'** is important for compatibility with older de
 
 I've included the FontForge files in this repository, you can find them in the `/src` folder. 
 
+### Build with slight extra boldness
+
+This repository includes a build script at [`build.py`](./build.py) that:
+
+- opens each `.sfd` in `./src`
+- applies a tunable `changeWeight` step (slight embolden)
+- cleans outlines (`removeOverlap`, `correctDirection`, `round`)
+- normalizes style-linking metadata (regular/bold/italic bits)
+- autohints for better Kobo rendering (`ttfautohint`)
+- exports adjusted `.ttf` files to `./out/ttf`
+- generates Kobo KF variants in `./out/kf` via `kobofix.py`
+
+Examples:
+
+```bash
+# Default build (ideal embolden, currently 16), output to ./out
+python3 build.py --clean
+
+# Try a milder build for comparison
+python3 build.py --clean --embolden 6
+
+# Build only one style while tuning
+python3 build.py --embolden 6 --fonts Cartisse-Regular
+
+# Build a full T-series for comparison (Cartisse T8 ... Cartisse T20)
+python3 build.py --clean --t-series 8 20
+```
+
+Use `--verbose-fontforge` if you want full FontForge diagnostics.
+Use `--skip-kobo-fix` if you only want regular TTF outputs.
+By default, embolden is not applied to `Bold`/`BoldItalic`; use `--embolden-bold` to include them.
+If Kobo fix generation errors, install its dependency: `python3 -m pip install skia-pathops`.
+Default version metadata comes from `./VERSION`.
+
 You can download the TrueType version of these fonts via [Releases](https://github.com/nicoverbruggen/cartisse/releases), which are ready to be copied to your favorite e-reader. Alternatively, you can export the source files yourself.
 
 ## License

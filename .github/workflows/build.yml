@@ -1,0 +1,71 @@
+name: Build fonts
+
+on:
+  push:
+    branches: [main, develop]
+    tags: ["*"]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/nicoverbruggen/fntbld-oci:latest
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Build fonts
+        run: python3 build.py --clean
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v6
+        with:
+          name: Cartisse
+          path: out/ttf/*.ttf
+
+      - name: Upload Kobo artifact
+        uses: actions/upload-artifact@v6
+        with:
+          name: KF_Cartisse
+          path: out/kf/*.ttf
+
+      - name: Zip fonts for release
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          cd out/ttf && zip -j ../../Cartisse.zip *.ttf
+          cd ../../out/kf && zip -j ../../KF_Cartisse.zip *.ttf
+
+      - name: Upload release zips
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: actions/upload-artifact@v6
+        with:
+          name: Cartisse-release
+          path: |
+            Cartisse.zip
+            KF_Cartisse.zip
+
+  release:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/download-artifact@v6
+        with:
+          name: Cartisse-release
+
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          draft: false
+          name: ${{ github.ref_name }}
+          body: |
+            Cartisse automated build output.
+
+            Download `Cartisse.zip` for standard TTFs and `KF_Cartisse.zip`
+            for Kobo-adjusted KF variants.
+          files: |
+            Cartisse.zip
+            KF_Cartisse.zip
