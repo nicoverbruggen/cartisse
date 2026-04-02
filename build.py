@@ -43,6 +43,7 @@ STYLE_MAP = {
 
 # Optional explicit pair fixups for renderers with weak ligature support.
 KERN_PAIRS: list[tuple[str, str, int]] = []
+ML_KERN_DISABLED_STYLES = {"Italic", "BoldItalic"}
 
 
 class BuildError(RuntimeError):
@@ -651,8 +652,11 @@ def build_fonts(
             )
 
             fix_ttf_style_flags(out_ttf, style_suffix)
-            style_ml_pairs = load_ml_kern_pairs(style_suffix, ml_kern_dir, ml_kern_tag)
-            add_kern_pairs(out_ttf, extra_pairs=style_ml_pairs)
+            if style_suffix in ML_KERN_DISABLED_STYLES:
+                print(f"  Skipping ML kern pairs for {style_suffix}")
+            else:
+                style_ml_pairs = load_ml_kern_pairs(style_suffix, ml_kern_dir, ml_kern_tag)
+                add_kern_pairs(out_ttf, extra_pairs=style_ml_pairs)
 
             target_ttf_paths.append(out_ttf)
             generated_ttf += 1
