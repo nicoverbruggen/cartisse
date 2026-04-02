@@ -4,12 +4,13 @@
 Features:
 - Adjustable embolden (`--embolden`)
 - Optional T-series batch builds (`--t-series 8 20` => "Cartisse T8".."Cartisse T20")
-- Kobo-friendly post-processing (style flags, autohint, kobofix KF variants)
+- Kobo-friendly post-processing (style flags, kobofix KF variants)
 """
 
 from __future__ import annotations
 
 import argparse
+import json
 import os
 from pathlib import Path
 import re
@@ -25,6 +26,7 @@ ROOT_DIR = Path(__file__).resolve().parent
 DEFAULT_SRC_DIR = ROOT_DIR / "src"
 DEFAULT_OUT_DIR = ROOT_DIR / "out"
 DEFAULT_VERSION_FILE = ROOT_DIR / "VERSION"
+DEFAULT_ML_KERN_EXPORT_DIR = ROOT_DIR / "ml-kern-exports"
 DEFAULT_FAMILY = "Cartisse"
 DEFAULT_EMBOLDEN = 16.0
 
@@ -42,10 +44,6 @@ STYLE_MAP = {
 # Optional explicit pair fixups for renderers with weak ligature support.
 KERN_PAIRS: list[tuple[str, str, int]] = []
 
-AUTOHINT_OPTS = [
-    "--stem-width-mode=nss",
-]
-
 
 class BuildError(RuntimeError):
     """Raised when the font build fails."""
@@ -55,6 +53,64 @@ class BuildError(RuntimeError):
 class BuildTarget:
     family: str
     embolden: float
+
+
+def load_ml_kern_pairs(
+    style_suffix: str,
+    pairs_dir: Path,
+    tag: str,
+) -> list[tuple[str, str, int]]:
+    """Load required style-specific ML kerning pairs exported as JSON."""
+    if not pairs_dir.is_dir():
+        raise BuildError(f"ML kern export directory not found: {pairs_dir}")
+
+    patterns: list[str] = []
+    if tag:
+        patterns.append(f"*-{style_suffix}-MLTrial-{tag}.kern.json")
+    patterns.append(f"*-{style_suffix}-MLTrial-*.kern.json")
+    patterns.append(f"*-{style_suffix}-*.kern.json")
+
+    candidates: list[Path] = []
+    for pattern in patterns:
+        matches = sorted(pairs_dir.glob(pattern))
+        if matches:
+            candidates = matches
+            break
+    if not candidates:
+        searched = ", ".join(patterns)
+        raise BuildError(
+            f"Missing ML kern export for style '{style_suffix}' in {pairs_dir} "
+            f"(searched: {searched})"
+        )
+
+    source_file = sorted(candidates, key=lambda p: p.stat().st_mtime, reverse=True)[0]
+    try:
+        payload = json.loads(source_file.read_text(encoding="utf-8"))
+    except Exception as exc:
+        raise BuildError(f"Failed to parse ML kern file {source_file}: {exc}") from exc
+
+    raw_pairs = payload.get("pairs", [])
+    if not isinstance(raw_pairs, list):
+        raise BuildError(f"Invalid ML kern file (missing list 'pairs'): {source_file}")
+
+    result: list[tuple[str, str, int]] = []
+    for item in raw_pairs:
+        if not isinstance(item, dict):
+            continue
+        left = item.get("left_glyph") or item.get("left_char")
+        right = item.get("right_glyph") or item.get("right_char")
+        value = item.get("value")
+        if not isinstance(left, str) or not isinstance(right, str):
+            continue
+        if not isinstance(value, int):
+            continue
+        result.append((left, right, int(value)))
+
+    print(
+        f"  Loaded {len(result)} ML kern pair(s) for {style_suffix} "
+        f"from {source_file.name}"
+    )
+    return result
 
 
 def load_font_version(version_file: Path) -> str:
@@ -320,9 +376,17 @@ def fix_ttf_style_flags(ttf_path: Path, style_suffix: str) -> None:
     print(f"  Normalized style flags for {style_suffix}")
 
 
-def add_kern_pairs(ttf_path: Path) -> None:
+def add_kern_pairs(
+    ttf_path: Path,
+    extra_pairs: list[tuple[str, str, int]] | None = None,
+) -> None:
     """Prepend explicit kern pairs to the first PairPos(Format 1) table."""
-    if not KERN_PAIRS:
+    all_pairs: list[tuple[str, str, int]] = []
+    if extra_pairs:
+        all_pairs.extend(extra_pairs)
+    if KERN_PAIRS:
+        all_pairs.extend(KERN_PAIRS)
+    if not all_pairs:
         return
 
     try:
@@ -352,7 +416,7 @@ def add_kern_pairs(ttf_path: Path) -> None:
         return None
 
     pairs: list[tuple[str, str, int]] = []
-    for left, right, value in KERN_PAIRS:
+    for left, right, value in all_pairs:
         l = resolve(left)
         r = resolve(right)
         if l and r:
@@ -407,40 +471,6 @@ def add_kern_pairs(ttf_path: Path) -> None:
     font.save(str(ttf_path))
     font.close()
     print(f"  Added {count} kern pair(s) to GPOS")
-
-
-def check_ttfautohint(required: bool) -> None:
-    """Ensure ttfautohint is available when required."""
-    if shutil.which("ttfautohint"):
-        return
-    if not required:
-        return
-
-    raise BuildError(
-        "ttfautohint not found. Install it for Kobo-ready hinting, "
-        "or rerun with --skip-autohint."
-    )
-
-
-def autohint_ttf(ttf_path: Path) -> None:
-    """Run ttfautohint on a TTF in-place."""
-    if not shutil.which("ttfautohint"):
-        raise BuildError("ttfautohint not found")
-
-    tmp_path = str(ttf_path) + ".autohint.tmp"
-    result = subprocess.run(
-        ["ttfautohint"] + AUTOHINT_OPTS + [str(ttf_path), tmp_path],
-        capture_output=True,
-        text=True,
-    )
-    if result.returncode != 0:
-        err = (result.stderr or "").strip()
-        if os.path.exists(tmp_path):
-            os.remove(tmp_path)
-        raise BuildError(f"ttfautohint failed for {ttf_path.name}: {err}")
-
-    os.replace(tmp_path, str(ttf_path))
-    print("  Autohinted with ttfautohint")
 
 
 def resolve_kobofix_script(
@@ -537,16 +567,16 @@ def build_fonts(
     cleanup: bool,
     only_fonts: set[str] | None,
     verbose_fontforge: bool,
-    skip_autohint: bool,
     skip_kobo_fix: bool,
     kobofix_path: str | None,
     embolden_bold: bool,
+    ml_kern_dir: Path,
+    ml_kern_tag: str,
     font_version: str,
     sfnt_revision: float | None,
 ) -> None:
     """Run the build pipeline for all targets and source files."""
     sources = collect_sources(src_dir, only_fonts)
-    check_ttfautohint(required=not skip_autohint)
 
     out_ttf_dir = out_dir / "ttf"
     out_kf_dir = out_dir / "kf"
@@ -571,8 +601,9 @@ def build_fonts(
     print(f"Targets    : {len(targets)}")
     print(f"Version    : {font_version}")
     print(f"Bold embolden: {'yes' if embolden_bold else 'no'}")
+    tag_msg = ml_kern_tag if ml_kern_tag else "auto"
+    print(f"ML kern pairs: {ml_kern_dir} (tag={tag_msg})")
     print(f"Cleanup    : {'yes' if cleanup else 'no'}")
-    print(f"Autohint   : {'yes' if not skip_autohint else 'no'}")
     print(f"Kobo fix   : {'yes' if not skip_kobo_fix else 'no'}")
     print(f"FontForge  : {' '.join(fontforge_cmd)}")
 
@@ -620,9 +651,8 @@ def build_fonts(
             )
 
             fix_ttf_style_flags(out_ttf, style_suffix)
-            add_kern_pairs(out_ttf)
-            if not skip_autohint:
-                autohint_ttf(out_ttf)
+            style_ml_pairs = load_ml_kern_pairs(style_suffix, ml_kern_dir, ml_kern_tag)
+            add_kern_pairs(out_ttf, extra_pairs=style_ml_pairs)
 
             target_ttf_paths.append(out_ttf)
             generated_ttf += 1
@@ -680,6 +710,23 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         help="Path to VERSION file used for output font version metadata.",
     )
     parser.add_argument(
+        "--ml-kern-dir",
+        default=str(DEFAULT_ML_KERN_EXPORT_DIR),
+        help=(
+            "Directory with style-specific ML kerning exports "
+            "(*-Regular-MLTrial-<tag>.kern.json, etc.). "
+            "Default: ./ml-kern-exports"
+        ),
+    )
+    parser.add_argument(
+        "--ml-kern-tag",
+        default="",
+        help=(
+            "Optional ML export tag (example: v2-tight). If set, build prefers "
+            "files matching *-<Style>-MLTrial-<tag>.kern.json."
+        ),
+    )
+    parser.add_argument(
         "--t-series",
         nargs=2,
         type=int,
@@ -725,11 +772,6 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         help="Skip overlap/direction/round cleanup.",
     )
     parser.add_argument(
-        "--skip-autohint",
-        action="store_true",
-        help="Skip ttfautohint post-processing.",
-    )
-    parser.add_argument(
         "--skip-kobo-fix",
         action="store_true",
         help="Skip kobofix KF variant generation.",
@@ -750,6 +792,9 @@ def main(argv: list[str] | None = None) -> int:
         font_version = load_font_version(Path(args.version_file).resolve())
         sfnt_revision = parse_sfnt_revision(font_version)
         fontforge_cmd = find_fontforge(args.fontforge)
+        ml_kern_dir = Path(args.ml_kern_dir).resolve()
+        if not ml_kern_dir.is_dir():
+            raise BuildError(f"--ml-kern-dir not found: {ml_kern_dir}")
         build_fonts(
             src_dir=Path(args.src_dir).resolve(),
             out_dir=Path(args.out_dir).resolve(),
@@ -759,10 +804,11 @@ def main(argv: list[str] | None = None) -> int:
             cleanup=not args.skip_cleanup,
             only_fonts=set(args.fonts) if args.fonts else None,
             verbose_fontforge=args.verbose_fontforge,
-            skip_autohint=args.skip_autohint,
             skip_kobo_fix=args.skip_kobo_fix,
             kobofix_path=args.kobofix_path,
             embolden_bold=args.embolden_bold,
+            ml_kern_dir=ml_kern_dir,
+            ml_kern_tag=args.ml_kern_tag.strip(),
             font_version=font_version,
             sfnt_revision=sfnt_revision,
         )

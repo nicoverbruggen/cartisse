@@ -48,7 +48,6 @@ This repository includes a build script at [`build.py`](./build.py) that:
 - applies a tunable `changeWeight` step (slight embolden)
 - cleans outlines (`removeOverlap`, `correctDirection`, `round`)
 - normalizes style-linking metadata (regular/bold/italic bits)
-- autohints for better Kobo rendering (`ttfautohint`)
 - exports adjusted `.ttf` files to `./out/ttf`
 - generates Kobo KF variants in `./out/kf` via `kobofix.py`
 
