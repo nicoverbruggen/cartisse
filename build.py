@@ -25,6 +25,7 @@ from dataclasses import dataclass
 ROOT_DIR = Path(__file__).resolve().parent
 DEFAULT_SRC_DIR = ROOT_DIR / "src"
 DEFAULT_OUT_DIR = ROOT_DIR / "out"
+DEFAULT_DOC_DIR = ROOT_DIR / "doc"
 DEFAULT_VERSION_FILE = ROOT_DIR / "VERSION"
 DEFAULT_ML_KERN_EXPORT_DIR = ROOT_DIR / "ml-kern-exports"
 DEFAULT_FAMILY = "Cartisse"
@@ -43,7 +44,6 @@ STYLE_MAP = {
 
 # Optional explicit pair fixups for renderers with weak ligature support.
 KERN_PAIRS: list[tuple[str, str, int]] = []
-ML_KERN_DISABLED_STYLES = {"Italic", "BoldItalic"}
 
 
 class BuildError(RuntimeError):
@@ -54,6 +54,15 @@ class BuildError(RuntimeError):
 class BuildTarget:
     family: str
     embolden: float
+
+
+@dataclass(frozen=True)
+class KernPairComparison:
+    left: str
+    right: str
+    source: int
+    new: int
+    delta: int
 
 
 def load_ml_kern_pairs(
@@ -380,29 +389,24 @@ def fix_ttf_style_flags(ttf_path: Path, style_suffix: str) -> None:
 def add_kern_pairs(
     ttf_path: Path,
     extra_pairs: list[tuple[str, str, int]] | None = None,
-) -> None:
+) -> list[KernPairComparison]:
     """Prepend explicit kern pairs to the first PairPos(Format 1) table."""
-    all_pairs: list[tuple[str, str, int]] = []
-    if extra_pairs:
-        all_pairs.extend(extra_pairs)
-    if KERN_PAIRS:
-        all_pairs.extend(KERN_PAIRS)
-    if not all_pairs:
-        return
+    if not extra_pairs and not KERN_PAIRS:
+        return []
 
     try:
         from fontTools.ttLib import TTFont
         from fontTools.ttLib.tables.otTables import PairValueRecord, ValueRecord, PairSet
     except Exception:
         print("  [warn] Skipping kern pairs: fontTools not available", file=sys.stderr)
-        return
+        return []
 
     font = TTFont(str(ttf_path))
     gpos = font.get("GPOS")
     if gpos is None:
         font.close()
         print("  [warn] No GPOS table, skipping kern pairs", file=sys.stderr)
-        return
+        return []
 
     cmap = font.getBestCmap()
     glyph_order = set(font.getGlyphOrder())
@@ -416,16 +420,90 @@ def add_kern_pairs(
             return name
         return None
 
-    pairs: list[tuple[str, str, int]] = []
-    for left, right, value in all_pairs:
+    ml_pairs: list[tuple[str, str, int]] = []
+    for left, right, value in (extra_pairs or []):
         l = resolve(left)
         r = resolve(right)
         if l and r:
-            pairs.append((l, r, value))
+            ml_pairs.append((l, r, value))
+
+    explicit_pairs: list[tuple[str, str, int]] = []
+    for left, right, value in KERN_PAIRS:
+        l = resolve(left)
+        r = resolve(right)
+        if l and r:
+            explicit_pairs.append((l, r, value))
+
+    def xadvance(value_record: object) -> int:
+        return int(getattr(value_record, "XAdvance", 0) or 0)
+
+    # Clamp ML kerning increases so JSON never loosens spacing relative to source.
+    # Rule: when a pair exists in source and ML value is greater (less negative/more positive),
+    # use the source value instead.
+    source_values: dict[tuple[str, str], int] = {}
+    if ml_pairs:
+        requested_by_left: dict[str, set[str]] = {}
+        for left_glyph, right_glyph, _ in ml_pairs:
+            requested_by_left.setdefault(left_glyph, set()).add(right_glyph)
+
+        for lookup in gpos.table.LookupList.Lookup:
+            if lookup.LookupType != 2:
+                continue
+            for subtable in lookup.SubTable:
+                fmt = getattr(subtable, "Format", None)
+                if fmt == 1:
+                    coverage = list(subtable.Coverage.glyphs)
+                    for idx, left_glyph in enumerate(coverage):
+                        right_targets = requested_by_left.get(left_glyph)
+                        if not right_targets:
+                            continue
+                        pair_set = subtable.PairSet[idx]
+                        for pvr in pair_set.PairValueRecord:
+                            right_glyph = pvr.SecondGlyph
+                            if right_glyph not in right_targets:
+                                continue
+                            value = xadvance(getattr(pvr, "Value1", None))
+                            if value != 0:
+                                key = (left_glyph, right_glyph)
+                                source_values[key] = source_values.get(key, 0) + value
+                elif fmt == 2:
+                    class1_defs = dict(getattr(subtable.ClassDef1, "classDefs", {}) or {})
+                    class2_defs = dict(getattr(subtable.ClassDef2, "classDefs", {}) or {})
+                    coverage_set = set(subtable.Coverage.glyphs)
+                    for left_glyph, right_targets in requested_by_left.items():
+                        if left_glyph not in coverage_set:
+                            continue
+                        c1 = class1_defs.get(left_glyph, 0)
+                        if c1 >= len(subtable.Class1Record):
+                            continue
+                        c1_record = subtable.Class1Record[c1]
+                        for right_glyph in right_targets:
+                            c2 = class2_defs.get(right_glyph, 0)
+                            if c2 >= len(c1_record.Class2Record):
+                                continue
+                            c2_record = c1_record.Class2Record[c2]
+                            value = xadvance(getattr(c2_record, "Value1", None))
+                            if value != 0:
+                                key = (left_glyph, right_glyph)
+                                source_values[key] = source_values.get(key, 0) + value
+
+    clamped_ml_pairs: list[tuple[str, str, int]] = []
+    clamped_count = 0
+    for left_glyph, right_glyph, value in ml_pairs:
+        source_value = source_values.get((left_glyph, right_glyph))
+        if source_value is not None and value > source_value:
+            value = source_value
+            clamped_count += 1
+        clamped_ml_pairs.append((left_glyph, right_glyph, value))
+
+    if clamped_count:
+        print(f"  Clamped {clamped_count} ML kern increase(s) to source values")
+
+    pairs = clamped_ml_pairs + explicit_pairs
 
     if not pairs:
         font.close()
-        return
+        return []
 
     pair_pos = None
     for lookup in gpos.table.LookupList.Lookup:
@@ -440,7 +518,7 @@ def add_kern_pairs(
     if pair_pos is None:
         font.close()
         print("  [warn] No PairPos Format 1 table, skipping kern pairs", file=sys.stderr)
-        return
+        return []
 
     count = 0
     for left_glyph, right_glyph, value in pairs:
@@ -472,6 +550,242 @@ def add_kern_pairs(
     font.save(str(ttf_path))
     font.close()
     print(f"  Added {count} kern pair(s) to GPOS")
+    comparisons: list[KernPairComparison] = []
+    for left_glyph, right_glyph, value in clamped_ml_pairs:
+        source_value = source_values.get((left_glyph, right_glyph))
+        if source_value is None:
+            continue
+        if source_value == value:
+            continue
+        comparisons.append(
+            KernPairComparison(
+                left=left_glyph,
+                right=right_glyph,
+                source=source_value,
+                new=value,
+                delta=value - source_value,
+            )
+        )
+    return comparisons
+
+
+def write_kern_proof_svg(
+    ttf_path: Path,
+    output_svg: Path,
+    title: str,
+    comparisons: list[KernPairComparison],
+    max_rows: int = 24,
+) -> None:
+    """Write a side-by-side SVG proving changed kern pairs vs source values."""
+    output_svg.parent.mkdir(parents=True, exist_ok=True)
+    rows = sorted(comparisons, key=lambda item: abs(item.delta), reverse=True)[:max_rows]
+    if not rows:
+        svg = textwrap.dedent(
+            f"""\
+            <svg xmlns="http://www.w3.org/2000/svg" width="980" height="160" viewBox="0 0 980 160">
+              <rect x="0" y="0" width="980" height="160" fill="#ffffff"/>
+              <text x="24" y="36" font-family="Menlo, Consolas, monospace" font-size="22" fill="#111827">{title}</text>
+              <text x="24" y="82" font-family="Menlo, Consolas, monospace" font-size="14" fill="#4b5563">
+                No changed source-vs-ML pairs for this style after clamping.
+              </text>
+            </svg>
+            """
+        )
+        output_svg.write_text(svg, encoding="utf-8")
+        print(f"  Wrote kern proof SVG: {output_svg}")
+        return
+
+    try:
+        from fontTools.ttLib import TTFont
+        from fontTools.pens.svgPathPen import SVGPathPen
+    except Exception:
+        print("  [warn] Skipping kern proof SVG: fontTools SVG support not available")
+        return
+
+    tt = TTFont(str(ttf_path))
+    glyph_set = tt.getGlyphSet()
+    hmtx = tt["hmtx"].metrics
+
+    def glyph_adv(name: str) -> int:
+        return int(hmtx.get(name, (0, 0))[0])
+
+    def glyph_path(name: str) -> str:
+        pen = SVGPathPen(glyph_set)
+        glyph_set[name].draw(pen)
+        return pen.getCommands()
+
+    def render_pair(
+        left: str,
+        right: str,
+        kern_value: int,
+        x: float,
+        y: float,
+        w: float,
+        h: float,
+        color: str,
+    ) -> str:
+        if left not in glyph_set or right not in glyph_set:
+            return (
+                f'<text x="{x + 10:.1f}" y="{y + h / 2:.1f}" '
+                'font-family="Menlo, Consolas, monospace" font-size="12" fill="#b91c1c">'
+                "missing glyph"
+                "</text>"
+            )
+
+        left_adv = glyph_adv(left)
+        right_adv = glyph_adv(right)
+        side_pad = 320
+        total_units = max(1, side_pad + left_adv + kern_value + right_adv + side_pad)
+        scale = min(0.12, (w - 28) / total_units)
+        start_x = x + (w - total_units * scale) / 2
+        baseline = y + h * 0.78
+        left_x_units = side_pad
+        right_x_units = side_pad + left_adv + kern_value
+
+        left_path = glyph_path(left)
+        right_path = glyph_path(right)
+        return "\n".join(
+            [
+                (
+                    f'<path d="{left_path}" transform="translate({start_x + left_x_units * scale:.2f},'
+                    f'{baseline:.2f}) scale({scale:.6f},{-scale:.6f})" fill="{color}" />'
+                ),
+                (
+                    f'<path d="{right_path}" transform="translate({start_x + right_x_units * scale:.2f},'
+                    f'{baseline:.2f}) scale({scale:.6f},{-scale:.6f})" fill="{color}" />'
+                ),
+            ]
+        )
+
+    left_margin = 24
+    col_pair = 120
+    col_src = 90
+    col_new = 90
+    col_src_view = 560
+    col_new_view = 560
+    col_delta = 90
+    header_h = 92
+    row_h = 90
+    width = (
+        left_margin
+        + col_pair
+        + col_src
+        + col_new
+        + col_src_view
+        + col_new_view
+        + col_delta
+        + 24
+    )
+    height = header_h + row_h * len(rows) + 24
+
+    parts: list[str] = []
+    parts.append(
+        f'<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" '
+        f'viewBox="0 0 {width} {height}">'
+    )
+    parts.append(f'<rect x="0" y="0" width="{width}" height="{height}" fill="#ffffff"/>')
+    parts.append(
+        f'<text x="24" y="34" font-family="Menlo, Consolas, monospace" font-size="22" '
+        f'fill="#111827">{title}</text>'
+    )
+    parts.append(
+        '<text x="24" y="58" font-family="Menlo, Consolas, monospace" font-size="13" fill="#4b5563">'
+        'Left sample: source kerning. Right sample: ML-applied kerning after clamping.'
+        "</text>"
+    )
+
+    x = left_margin
+    for label, w in [
+        ("Pair", col_pair),
+        ("Src", col_src),
+        ("New", col_new),
+        ("Source Rendering", col_src_view),
+        ("New Rendering", col_new_view),
+        ("Delta", col_delta),
+    ]:
+        parts.append(
+            f'<rect x="{x}" y="{header_h - 32}" width="{w}" height="28" fill="#f3f4f6" stroke="#d1d5db"/>'
+        )
+        parts.append(
+            f'<text x="{x + 8}" y="{header_h - 13}" font-family="Menlo, Consolas, monospace" '
+            f'font-size="12" fill="#111827">{label}</text>'
+        )
+        x += w
+
+    for idx, item in enumerate(rows):
+        y = header_h + idx * row_h
+        bg = "#ffffff" if idx % 2 == 0 else "#fafafa"
+        parts.append(
+            f'<rect x="{left_margin}" y="{y}" width="{width - left_margin - 24}" '
+            f'height="{row_h}" fill="{bg}" stroke="#e5e7eb"/>'
+        )
+
+        x = left_margin
+        delta_color = "#dc2626" if item.delta < 0 else "#2563eb"
+        parts.append(
+            f'<text x="{x + 8}" y="{y + 54}" font-family="Menlo, Consolas, monospace" '
+            f'font-size="15" fill="#111827">{item.left}/{item.right}</text>'
+        )
+        x += col_pair
+        parts.append(
+            f'<text x="{x + 8}" y="{y + 54}" font-family="Menlo, Consolas, monospace" '
+            f'font-size="14" fill="#111827">{item.source}</text>'
+        )
+        x += col_src
+        parts.append(
+            f'<text x="{x + 8}" y="{y + 54}" font-family="Menlo, Consolas, monospace" '
+            f'font-size="14" fill="#111827">{item.new}</text>'
+        )
+        x += col_new
+
+        src_cell_x = x
+        parts.append(
+            f'<rect x="{src_cell_x + 6}" y="{y + 10}" width="{col_src_view - 12}" '
+            f'height="{row_h - 20}" fill="#f9fafb" stroke="#d1d5db" rx="6"/>'
+        )
+        parts.append(
+            render_pair(
+                item.left,
+                item.right,
+                item.source,
+                src_cell_x + 6,
+                y + 10,
+                col_src_view - 12,
+                row_h - 20,
+                "#111827",
+            )
+        )
+        x += col_src_view
+
+        new_cell_x = x
+        parts.append(
+            f'<rect x="{new_cell_x + 6}" y="{y + 10}" width="{col_new_view - 12}" '
+            f'height="{row_h - 20}" fill="#f0f9ff" stroke="#93c5fd" rx="6"/>'
+        )
+        parts.append(
+            render_pair(
+                item.left,
+                item.right,
+                item.new,
+                new_cell_x + 6,
+                y + 10,
+                col_new_view - 12,
+                row_h - 20,
+                "#0c4a6e",
+            )
+        )
+        x += col_new_view
+
+        sign = "+" if item.delta > 0 else ""
+        parts.append(
+            f'<text x="{x + 8}" y="{y + 54}" font-family="Menlo, Consolas, monospace" '
+            f'font-size="14" fill="{delta_color}">{sign}{item.delta}</text>'
+        )
+
+    parts.append("</svg>")
+    tt.close()
+    output_svg.write_text("\n".join(parts), encoding="utf-8")
+    print(f"  Wrote kern proof SVG: {output_svg}")
 
 
 def resolve_kobofix_script(
@@ -581,6 +895,7 @@ def build_fonts(
 
     out_ttf_dir = out_dir / "ttf"
     out_kf_dir = out_dir / "kf"
+    out_doc_dir = DEFAULT_DOC_DIR
 
     if clean and out_dir.exists():
         shutil.rmtree(out_dir)
@@ -606,6 +921,7 @@ def build_fonts(
     print(f"ML kern pairs: {ml_kern_dir} (tag={tag_msg})")
     print(f"Cleanup    : {'yes' if cleanup else 'no'}")
     print(f"Kobo fix   : {'yes' if not skip_kobo_fix else 'no'}")
+    print(f"Proof SVGs : {out_doc_dir}")
     print(f"FontForge  : {' '.join(fontforge_cmd)}")
 
     generated_ttf = 0
@@ -652,11 +968,16 @@ def build_fonts(
             )
 
             fix_ttf_style_flags(out_ttf, style_suffix)
-            if style_suffix in ML_KERN_DISABLED_STYLES:
-                print(f"  Skipping ML kern pairs for {style_suffix}")
-            else:
-                style_ml_pairs = load_ml_kern_pairs(style_suffix, ml_kern_dir, ml_kern_tag)
-                add_kern_pairs(out_ttf, extra_pairs=style_ml_pairs)
+            style_ml_pairs = load_ml_kern_pairs(style_suffix, ml_kern_dir, ml_kern_tag)
+            comparisons = add_kern_pairs(out_ttf, extra_pairs=style_ml_pairs)
+            proof_svg_name = f"kern-proof-{family_file_component}-{style_suffix}.svg"
+            proof_svg_path = out_doc_dir / proof_svg_name
+            write_kern_proof_svg(
+                ttf_path=out_ttf,
+                output_svg=proof_svg_path,
+                title=f"{target.family} {style_display}: Kern Pair Comparison vs Source",
+                comparisons=comparisons,
+            )
 
             target_ttf_paths.append(out_ttf)
             generated_ttf += 1
